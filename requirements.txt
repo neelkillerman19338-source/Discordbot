@@ -1,2 +1,2 @@
 # Discord bot dependencies — target runtime: Python 3.13
-discord.py>=2.4.0,<3.0
+discord.py==2.7.0

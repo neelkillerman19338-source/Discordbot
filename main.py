@@ -7,14 +7,16 @@ Features
 * Accepts three command prefixes: an @mention of the bot, ``+`` and ``!``.
 * Reads the bot token from a file named ``bot_token`` next to this script.
 
-Target runtime: Python 3.13 (discord.py 2.4+).
+Target runtime: Python 3.13 (discord.py 2.7.0).
 """
 
 from __future__ import annotations
 
 import logging
+import sys
 from pathlib import Path
 
+import aiohttp
 import discord
 from discord.ext import commands
 
@@ -39,7 +41,9 @@ def read_token(path: Path = TOKEN_FILE) -> str:
     """Read the bot token from ``path``.
 
     The file may contain the token on its own line; surrounding whitespace,
-    a UTF-8 BOM and an optional ``BOT_TOKEN=`` prefix are tolerated.
+    a UTF-8 BOM, blank lines, ``#`` comments, an optional ``BOT_TOKEN=`` /
+    ``TOKEN=`` / ``DISCORD_TOKEN=`` prefix and surrounding quotes are all
+    tolerated. The first usable line wins.
     """
     if not path.is_file():
         raise FileNotFoundError(
@@ -48,17 +52,29 @@ def read_token(path: Path = TOKEN_FILE) -> str:
             "Discord bot token."
         )
 
-    raw = path.read_text(encoding="utf-8-sig").strip()
-    if not raw:
-        raise ValueError(f"Token file is empty: {path}")
+    raw = path.read_text(encoding="utf-8-sig")
 
-    # Allow both "abc.def.ghi" and "BOT_TOKEN=abc.def.ghi"
-    if "=" in raw and "\n" not in raw:
-        key, _, value = raw.partition("=")
-        if key.strip().upper() in {"BOT_TOKEN", "TOKEN", "DISCORD_TOKEN"}:
-            raw = value.strip()
+    token = ""
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
 
-    token = raw.splitlines()[0].strip()
+        if "=" in line:
+            key, _, value = line.partition("=")
+            if key.strip().upper() in {"BOT_TOKEN", "TOKEN", "DISCORD_TOKEN"}:
+                candidate = value.strip()
+            else:
+                # Unknown key (e.g. "KEY=") — ignore this line, keep looking.
+                continue
+        else:
+            candidate = line
+
+        candidate = candidate.strip().strip('"').strip("'").strip()
+        if candidate:
+            token = candidate
+            break
+
     if not token:
         raise ValueError(f"Token file contains no usable token: {path}")
     return token
@@ -95,12 +111,12 @@ async def load_cogs(bot: commands.Bot) -> None:
         log.warning("Cog directory not found: %s (starting with no cogs)", COG_DIR)
         return
 
-    # Extensions are imported as "cog.<name>", so the directory must be a
-    # package. Create the marker file if the user has not.
-    init_file = COG_DIR / "__init__.py"
-    if not init_file.exists():
-        init_file.touch()
-        log.info("Created missing package marker: %s", init_file)
+    # Extensions are imported as "cog.<name>". Python 3 treats a directory
+    # without __init__.py as a namespace package, so no marker file is needed
+    # (and none is created — the cog directory may be read-only). We only need
+    # the bot's base directory on sys.path so the import can resolve.
+    if str(BASE_DIR) not in sys.path:
+        sys.path.insert(0, str(BASE_DIR))
 
     loaded = 0
     for path in sorted(COG_DIR.glob("*.py")):
@@ -133,7 +149,6 @@ class DiscordBot(commands.Bot):
         super().__init__(
             command_prefix=get_prefix,
             intents=intents,
-            help_command=commands.DefaultHelpCommand(),
             case_insensitive=True,
             strip_after_prefix=True,
         )
@@ -147,6 +162,9 @@ class DiscordBot(commands.Bot):
 
     async def on_command_error(self, ctx: commands.Context, error: Exception) -> None:
         """Minimal, non-crashing error surface for prefix commands."""
+        # CommandInvokeError wraps the real exception raised inside the command.
+        error = getattr(error, "original", error)
+
         if isinstance(error, commands.CommandNotFound):
             return
         if isinstance(error, commands.MissingRequiredArgument):
@@ -158,8 +176,14 @@ class DiscordBot(commands.Bot):
                 mention_author=False,
             )
             return
+        if isinstance(error, commands.BotMissingPermissions):
+            await ctx.reply("I do not have permission to do that.", mention_author=False)
+            return
         if isinstance(error, commands.MissingPermissions):
             await ctx.reply("You do not have permission to run that.", mention_author=False)
+            return
+        if isinstance(error, commands.CheckFailure):
+            await ctx.reply("You cannot run that command.", mention_author=False)
             return
         log.exception("Unhandled command error in %s", getattr(ctx.command, "name", "?"), exc_info=error)
         await ctx.reply("Something went wrong running that command.", mention_author=False)
@@ -189,6 +213,9 @@ def main() -> None:
             "Privileged Gateway Intents."
         )
         raise SystemExit(1)
+    except (OSError, aiohttp.ClientError) as exc:
+        log.error("Could not connect to Discord: %s", exc)
+        raise SystemExit(1) from exc
 
 
 if __name__ == "__main__":
