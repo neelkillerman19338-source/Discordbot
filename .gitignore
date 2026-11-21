@@ -1,0 +1,26 @@
+# --- Secrets ---------------------------------------------------------------
+# The bot token file must NEVER be committed.
+bot_token
+bot_token.*
+*.token
+.env
+.env.*
+
+# --- Python ----------------------------------------------------------------
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- OS / editor -----------------------------------------------------------
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
