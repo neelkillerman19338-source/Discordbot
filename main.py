@@ -123,7 +123,7 @@ async def load_cogs(bot: commands.Bot) -> None:
 # Bot
 # --------------------------------------------------------------------------- #
 class DiscordBot(commands.Bot):
-    """Bot subclass that loads cogs during the async phase."""
+    """Bot subclass that loads cogs during the async setup phase."""
 
     def __init__(self) -> None:
         intents = discord.Intents.default()
